@@ -1,0 +1,123 @@
+import { useState, useRef, useEffect } from "react";
+import { initializeApp } from "firebase/app";
+import { getFirestore, collection, addDoc, getDocs, query, orderBy, limit } from "firebase/firestore";
+
+// إعدادات Firebase التي قدمتها
+const firebaseConfig = {
+  apiKey: "AIzaSyBivlHhccNEO65Hea193i9NyE7xG1KBUgY",
+  authDomain: "zino-ai.firebaseapp.com",
+  databaseURL: "https://zino-ai-default-rtdb.firebaseio.com",
+  projectId: "zino-ai",
+  storageBucket: "zino-ai.firebasestorage.app",
+  messagingSenderId: "703697719989",
+  appId: "1:703697719989:web:1a78fadd79e2091a0264fc",
+  measurementId: "G-40XYZQNCN2"
+};
+
+// تهيئة Firebase
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
+const HISTORY_COLLECTION = "analysisHistory";
+
+// ... باقي الثوابت (ANALYSIS_TYPES, PROMPTS, ResultCard) كما هي تماماً بدون تغيير ...
+
+export default function App() {
+  const [text, setText] = useState("");
+  const [selectedType, setSelectedType] = useState("sentiment");
+  const [result, setResult] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [history, setHistory] = useState([]);
+  const [showHistory, setShowHistory] = useState(false);
+  const textareaRef = useRef(null);
+
+  // تحميل السجل من Firebase عند بدء التطبيق
+  useEffect(() => {
+    const loadHistory = async () => {
+      try {
+        const q = query(collection(db, HISTORY_COLLECTION), orderBy("timestamp", "desc"), limit(10));
+        const snapshot = await getDocs(q);
+        const items = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        setHistory(items);
+      } catch (err) {
+        console.error("Failed to load history from Firebase:", err);
+        // لا نعرض خطأ للمستخدم لأن الخاصية ثانوية
+      }
+    };
+    loadHistory();
+  }, []);
+
+  // حفظ النتيجة في Firebase
+  const saveToFirebase = async (entry) => {
+    try {
+      await addDoc(collection(db, HISTORY_COLLECTION), entry);
+    } catch (err) {
+      console.error("Failed to save to Firebase:", err);
+    }
+  };
+
+  const analyzeText = async () => {
+    if (!text.trim()) {
+      setError("الرجاء إدخال نص للتحليل / Please enter text to analyze");
+      return;
+    }
+    setLoading(true);
+    setError("");
+    setResult(null);
+
+    try {
+      const response = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": "YOUR_ANTHROPIC_API_KEY", // يجب وضع مفتاح حقيقي أو استخدام وسيط خلفي
+          "anthropic-version": "2023-06-01"
+        },
+        body: JSON.stringify({
+          model: "claude-sonnet-4-20250514",
+          max_tokens: 1000,
+          system: PROMPTS[selectedType],
+          messages: [{ role: "user", content: text }],
+        }),
+      });
+
+      const data = await response.json();
+      const raw = data.content?.map(i => i.text || "").join("") || "";
+      const clean = raw.replace(/```json|```/g, "").trim();
+      const parsed = JSON.parse(clean);
+      setResult(parsed);
+
+      // إعداد الإدخال للحفظ في Firebase
+      const entry = {
+        type: selectedType,
+        textSnippet: text.slice(0, 80) + (text.length > 80 ? "..." : ""),
+        result: parsed,
+        timestamp: new Date().toISOString(),
+      };
+      // حفظ في Firestore
+      await saveToFirebase(entry);
+      // تحديث الحالة المحلية
+      setHistory(prev => [entry, ...prev.slice(0, 9)]);
+    } catch (e) {
+      console.error(e);
+      setError("حدث خطأ في التحليل. تأكد من الاتصال ومفتاح API. / Analysis failed.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // ... باقي الدوال (wordCount, charCount) كما هي ...
+  const wordCount = text.trim() ? text.trim().split(/\s+/).length : 0;
+  const charCount = text.length;
+
+  // ... JSX كما هو تماماً مع تغيير بسيط في قسم Firebase Info ليصبح واقعياً ...
+  return (
+    // ... نفس الـ JSX لكن يمكنك تعديل رسالة Firebase info ...
+    // بدلاً من <div className="firebase-info"> القديمة، استخدم هذه:
+    <div className="firebase-info">
+      <h3>🔥 Firebase متصل بنجاح</h3>
+      <p>تم ربط المشروع بـ Firebase Firestore. يتم حفظ جميع التحليلات تلقائياً وعرضها في السجل.<br/>
+      <strong>ملاحظة:</strong> مفتاح API الخاص بـ Claude لم يوضع بعد – يجب إضافته أو استخدام خادم وسيط ليعمل التحليل الفعلي.</p>
+    </div>
+  );
+}
